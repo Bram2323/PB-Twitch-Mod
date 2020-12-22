@@ -17,6 +17,8 @@ To install: Place this .dll in the ...\Poly Bridge 2\BepInEx\plugins folder
 
 - Send Bridge: The key that you need to press to send the bridge
 
+- Load Layout: The key that you need to press to load the current layout the streamer has
+
 
 # Advanced Settings
 - Key: The key/token it will use for authentication, will automatically be filled in if you linked your twitch with the game.
