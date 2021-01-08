@@ -24,7 +24,7 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.0.0";
+        public const string pluginVerson = "1.0.1";
 
         public static ConfigDefinition modEnableDef = new ConfigDefinition(pluginName, "Enable/Disable Mod");
         public static ConfigDefinition NameDef = new ConfigDefinition(pluginName, "Streamer Name");
@@ -235,7 +235,6 @@ namespace TwitchMod
             {
                 if (!CheckForCheating()) return;
 
-
                 if (LastName != mName.Value && !FindingID && !SendingBridge && !GettingLayout)
                 {
                     FindingID = true;
@@ -378,13 +377,15 @@ namespace TwitchMod
 
                 Debug.Log("Sending bridge...");
 
-                byte[] payloadBytes = BridgeSave.SerializeBinary();
+                byte[] payloadBytes;
 
-                payloadBytes = payloadBytes.AddToArray<byte>(255);
-                payloadBytes = payloadBytes.AddToArray<byte>(255);
-                payloadBytes = payloadBytes.AddToArray<byte>(255);
-                payloadBytes = payloadBytes.AddToArray<byte>(255);
-                
+                string guid = "Bram2323IsTheBest!";
+
+                if (!BridgeJoints.m_JointDictionary.ContainsKey(guid)) BridgeJoints.CreateJoint(new Vector3(0, 0, -10000), guid);
+                else Debug.Log("Twitch detection node already present in bridge");
+                payloadBytes = BridgeSave.SerializeBinary();
+                BridgeJoints.FindByGuid(guid).Destroy();
+
                 byte[] payloadCompressed = Utils.ZipPayload(payloadBytes);
                 string payload_md5 = Utils.MD5HashFor(payloadCompressed);
 
@@ -409,6 +410,8 @@ namespace TwitchMod
                     int twitch_bits_used = consumeReply.twitch_bits_used;
                     if (!Utils.MD5HashesMatch(level_hash, Sandbox.m_CurrentLayoutHash))
                     {
+                        SendingBridge = false;
+                        GameUI.m_Instance.m_Status.Close();
                         return;
                     }
                     if (twitch_bits_used > 0)
@@ -419,6 +422,8 @@ namespace TwitchMod
                     if (PolyTwitchSuggestions.SuggestionFromSameOwnerExists(id2, bridgeHash))
                     {
                         PolyTwitchSuggestions.UpdateSuggestionTimeAndBits(id2, bridgeHash, twitch_bits_used);
+                        SendingBridge = false;
+                        GameUI.m_Instance.m_Status.Close();
                         return;
                     }
                     int num = 0;
