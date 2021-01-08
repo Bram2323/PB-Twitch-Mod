@@ -3,7 +3,7 @@ What it does: It lets you send bridges to streamers ingame
 
 Game Version: 1.24+
 
-Mod Version: 1.0.0
+Mod Version: 1.0.1
 
 Dependencies: PolyTech Framework 0.7.5+
 
@@ -21,4 +21,4 @@ To install: Place this .dll in the ...\Poly Bridge 2\BepInEx\plugins folder
 
 
 # Advanced Settings
-- Key: The key/token it will use for authentication, will automatically be filled in if you linked your twitch with the game.
+- Key: The key/token it will use for authentication, will automatically be filled in if you linked your twitch with the game. (Make sure you keep this a secret, you don't want anyone to know what your key/token!)
