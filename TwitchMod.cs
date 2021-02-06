@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Reflection;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -24,39 +25,44 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.0.1";
+        public const string pluginVerson = "1.0.2";
 
-        public static ConfigDefinition modEnableDef = new ConfigDefinition(pluginName, "Enable/Disable Mod");
-        public static ConfigDefinition NameDef = new ConfigDefinition(pluginName, "Streamer Name");
-        public static ConfigDefinition SendBridgeDef = new ConfigDefinition(pluginName, "Send Bridge");
-        public static ConfigDefinition LoadLayoutDef = new ConfigDefinition(pluginName, "Load Layout");
-        public static ConfigDefinition KeyDef = new ConfigDefinition(pluginName, "Key");
+        public ConfigDefinition modEnableDef = new ConfigDefinition(pluginName, "Enable/Disable Mod");
+        public ConfigDefinition NameDef = new ConfigDefinition(pluginName, "Streamer Name");
+        public ConfigDefinition SendBridgeDef = new ConfigDefinition(pluginName, "Send Bridge");
+        public ConfigDefinition LoadLayoutDef = new ConfigDefinition(pluginName, "Load Layout");
+        public ConfigDefinition KeyDef = new ConfigDefinition(pluginName, "Key");
 
-        public static ConfigEntry<bool> mEnabled;
+        public ConfigEntry<bool> mEnabled;
 
-        public static ConfigEntry<string> mName;
-        public static string LastName = "";
+        public ConfigEntry<string> mName;
+        public string LastName = "";
         
-        public static ConfigEntry<string> mKey;
+        public ConfigEntry<string> mKey;
 
-        public static ConfigEntry<KeyboardShortcut> mSendBridge;
-        public static bool KeyIsDown = false;
-        public static bool SendingBridge = false;
+        public ConfigEntry<KeyboardShortcut> mSendBridge;
+        public bool KeyIsDown = false;
+        public bool SendingBridge = false;
 
-        public static ConfigEntry<KeyboardShortcut> mLoadLayout;
-        public static bool LayoutKeyIsDown = false;
-        public static bool GettingLayout = false;
+        public ConfigEntry<KeyboardShortcut> mLoadLayout;
+        public bool LayoutKeyIsDown = false;
+        public bool GettingLayout = false;
 
-        public static string ID = "";
-        public static bool FindingID = false;
+        public const string ClientID = "9bksp3cxt84auuicqxnnuk1y4mhrd6";
+        public const string ClientSecret = "fvilbl2jku0xixwfmz5euqi4vnml7f";
+        public string ID = "";
+        public DateTime LastCharInput;
+        public bool FindingID = false;
 
-        public static string Key = "";
+        public string Key = "";
 
         public static TwitchMain instance;
 
         void Awake()
         {
             if (instance == null) instance = this;
+            repositoryUrl = "https://github.com/Bram2323/PB-Twitch-Mod/";
+            LastCharInput = DateTime.Now;
 
             int order = 0;
 
@@ -67,6 +73,7 @@ namespace TwitchMod
 
             Config.Bind(NameDef, "", new ConfigDescription("Which streamer to send the bridge to", null, new ConfigurationManagerAttributes { Order = order }));
             mName = (ConfigEntry<string>)Config[NameDef];
+            mName.SettingChanged += onCharInput;
             order--;
 
             mSendBridge = Config.Bind(SendBridgeDef, new KeyboardShortcut(KeyCode.Tab), new ConfigDescription("What button sends the bridge", null, new ConfigurationManagerAttributes { Order = order }));
@@ -80,9 +87,6 @@ namespace TwitchMod
             order--;
 
 
-            Config.SettingChanged += onSettingChanged;
-            onSettingChanged(null, null);
-
             Harmony harmony = new Harmony(pluginGuid);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
@@ -92,17 +96,120 @@ namespace TwitchMod
             PolyTechMain.registerMod(this);
         }
 
+
         public void onEnableDisable(object sender, EventArgs e)
         {
             isEnabled = mEnabled.Value;
         }
 
-        public void onSettingChanged(object sender, EventArgs e)
+        public void onCharInput(object sender, EventArgs e)
         {
+            LastCharInput = DateTime.Now;
+        }
+        
 
+        public override void enableMod()
+        {
+            this.isEnabled = true;
+            mEnabled.Value = true;
+            onEnableDisable(null, null);
         }
 
-        private static void OnPullKeyComplete(UnityEngine.AsyncOperation asyncOperation)
+        public override void disableMod()
+        {
+            this.isEnabled = false;
+            mEnabled.Value = false;
+            onEnableDisable(null, null);
+        }
+
+        public override string getSettings()
+        {
+            return "";
+        }
+
+        public override void setSettings(string st)
+        {
+            return;
+        }
+
+        public bool CheckForCheating()
+        {
+            return mEnabled.Value && PolyTechMain.modEnabled.Value;
+        }
+
+        public bool SendingStuff()
+        {
+            return instance.FindingID || instance.SendingBridge || instance.GettingLayout;
+        }
+
+
+
+
+        [HarmonyPatch(typeof(Main), "Update")]
+        private static class patchUpdate
+        {
+            private static void Postfix()
+            {
+                if (!instance.CheckForCheating()) return;
+                
+
+                if (instance.LastName != instance.mName.Value && (DateTime.Now - instance.LastCharInput).TotalSeconds >= 2 && !instance.SendingStuff())
+                {
+                    instance.LastName = instance.mName.Value;
+                    instance.GetStreamerID();
+                }
+
+                if (instance.mSendBridge.Value.IsPressed() && !instance.KeyIsDown && !instance.SendingStuff())
+                {
+                    GameUI.m_Instance.m_TopBar.OnPauseSim();
+                    bool Broken = false;
+                    foreach (BridgeEdge Edge in BridgeEdges.m_Edges)
+                    {
+                        Broken = Edge.m_IsBroken || Broken;
+                    }
+                        
+
+                    if (Broken)
+                    {
+                        PopUpWarning.Display("Can't send bridge with broken edge!");
+                    }
+                    else
+                    {
+                        PopUpMessage.Display("Do you want to send the bridge?", instance.SendBridge);
+                    }
+                }
+                instance.KeyIsDown = instance.mSendBridge.Value.IsPressed();
+
+
+                if (instance.mLoadLayout.Value.IsPressed() && !instance.LayoutKeyIsDown && !instance.SendingStuff())
+                {
+                    PopUpMessage.Display("Do you want to load the layout?", instance.GetLayout);
+                }
+                instance.LayoutKeyIsDown = instance.mLoadLayout.Value.IsPressed();
+            }
+        }
+
+
+        public void GetStreamerID()
+        {
+            instance.FindingID = true;
+
+            if (Key.IsNullOrWhiteSpace())
+            {
+                GameUI.m_Instance.m_Status.Open("Getting streamer id (1/2)");
+                GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Getting Streamer ID", 3);
+                Debug.Log("Getting Twitch Key...");
+                WebRequest.Post("https://id.twitch.tv/oauth2/token?client_id=" + ClientID + "&client_secret=" + ClientSecret + "&grant_type=client_credentials", PolyTwitch.m_Key).SendWebRequest().completed += instance.OnPullKeyComplete;
+            }
+            else
+            {
+                GameUI.m_Instance.m_Status.Open("Getting streamer id (1/1)");
+                GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Getting Streamer ID", 3);
+                PullId();
+            }
+        }
+
+        private void OnPullKeyComplete(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             FindingID = false;
@@ -112,25 +219,30 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://id.twitch.tv/oauth2/token?client_id=nhmpgqu2aehuztyb1r5tkx2cad060n&client_secret=w1dla4hhs4r4u5gmklc395nfiqjgsv&grant_type=client_credentials" + " failed with: " + errorMessage);
+                Debug.LogWarning("https://id.twitch.tv/oauth2/token?client_id=" + ClientID + "&client_secret=******************************&grant_type=client_credentials" + " failed with: " + errorMessage);
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Could not get ID: " + errorMessage, 3);
                 PopUpWarning.Display("Could not get ID: " + errorMessage);
             }
             else
             {
-                FindingID = true;
-                GameUI.m_Instance.m_Status.Open("Getting streamer id (2/2)");
                 TwitchResponse response = JsonUtility.FromJson<TwitchResponse>(unityWebRequestAsyncOperation.webRequest.downloadHandler.text);
                 Key = response.access_token;
-                Debug.Log("Getting streamer ID...");
-                UnityWebRequest IDRequest = WebRequest.Get("https://api.twitch.tv/helix/users?login=" + mName.Value, PolyTwitch.m_Key);
-                IDRequest.SetRequestHeader("Authorization", "Bearer " + Key);
-                IDRequest.SetRequestHeader("Client-ID", "nhmpgqu2aehuztyb1r5tkx2cad060n");
-                IDRequest.SendWebRequest().completed += OnPullIdComplete;
+                FindingID = true;
+                GameUI.m_Instance.m_Status.Open("Getting streamer id (2/2)");
+                PullId();
             }
         }
 
-        private static void OnPullIdComplete(UnityEngine.AsyncOperation asyncOperation)
+        private void PullId()
+        {
+            Debug.Log("Getting streamer ID...");
+            UnityWebRequest IDRequest = WebRequest.Get("https://api.twitch.tv/helix/users?login=" + mName.Value, PolyTwitch.m_Key);
+            IDRequest.SetRequestHeader("Authorization", "Bearer " + Key);
+            IDRequest.SetRequestHeader("Client-ID", ClientID);
+            IDRequest.SendWebRequest().completed += OnPullIdComplete;
+        }
+
+        private void OnPullIdComplete(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             FindingID = false;
@@ -196,88 +308,6 @@ namespace TwitchMod
         }
 
 
-
-        public override void enableMod()
-        {
-            this.isEnabled = true;
-            mEnabled.Value = true;
-            onEnableDisable(null, null);
-        }
-
-        public override void disableMod()
-        {
-            this.isEnabled = false;
-            mEnabled.Value = false;
-            onEnableDisable(null, null);
-        }
-
-        public override string getSettings()
-        {
-            return "";
-        }
-
-        public override void setSettings(string st)
-        {
-            return;
-        }
-
-        private static bool CheckForCheating()
-        {
-            return mEnabled.Value && PolyTechMain.modEnabled.Value;
-        }
-
-
-
-        [HarmonyPatch(typeof(Main), "Update")]
-        private static class patchUpdate
-        {
-            private static void Postfix()
-            {
-                if (!CheckForCheating()) return;
-
-                if (LastName != mName.Value && !FindingID && !SendingBridge && !GettingLayout)
-                {
-                    FindingID = true;
-                    LastName = mName.Value;
-                    GameUI.m_Instance.m_Status.Open("Getting streamer id");
-
-                    GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Getting Streamer ID (1/2)", 3);
-                    Debug.Log("Getting Twitch Key...");
-                    WebRequest.Post("https://id.twitch.tv/oauth2/token?client_id=nhmpgqu2aehuztyb1r5tkx2cad060n&client_secret=w1dla4hhs4r4u5gmklc395nfiqjgsv&grant_type=client_credentials", PolyTwitch.m_Key).SendWebRequest().completed += OnPullKeyComplete;
-                }
-
-                if (mSendBridge.Value.IsPressed() && !KeyIsDown && !SendingBridge && !FindingID && !GettingLayout)
-                {
-                    GameUI.m_Instance.m_TopBar.OnPauseSim();
-                    bool Broken = false;
-                    foreach (BridgeEdge Edge in BridgeEdges.m_Edges)
-                    {
-                        Broken = Edge.m_IsBroken || Broken;
-                    }
-                        
-
-                    if (Broken)
-                    {
-                        PopUpWarning.Display("Can't send bridge with broken edge!");
-                    }
-                    else
-                    {
-                        PopUpMessage.Display("Do you want to send the bridge?", instance.SendBridge);
-                    }
-                }
-                KeyIsDown = mSendBridge.Value.IsPressed();
-
-
-                if (mLoadLayout.Value.IsPressed() && !LayoutKeyIsDown && !SendingBridge && !FindingID && !GettingLayout)
-                {
-                    PopUpMessage.Display("Do you want to load the layout?", instance.GetLayout);
-                }
-                LayoutKeyIsDown = mLoadLayout.Value.IsPressed();
-            }
-        }
-
-
-
         public void SendBridge()
         {
             foreach (BridgeEdge Edge in BridgeEdges.m_Edges)
@@ -300,11 +330,21 @@ namespace TwitchMod
             request.SendWebRequest().completed += OnConnectComplete;
         }
         
-        private static void OnConnectComplete(UnityEngine.AsyncOperation asyncOperation)
+        private void OnConnectComplete(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             SendingBridge = false;
             GameUI.m_Instance.m_Status.Close();
+
+            foreach (BridgeEdge Edge in BridgeEdges.m_Edges)
+            {
+                if (Edge.m_IsBroken)
+                {
+                    PopUpWarning.Display("Can't send bridge with broken edge!");
+                    return;
+                }
+            }
+
             UnityWebRequestAsyncOperation unityWebRequestAsyncOperation = (UnityWebRequestAsyncOperation)asyncOperation;
             Debug.Log(unityWebRequestAsyncOperation.webRequest.downloadHandler.text);
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
@@ -325,11 +365,21 @@ namespace TwitchMod
             }
         }
 
-        private static void PushBridge(UnityEngine.AsyncOperation asyncOperation)
+        private void PushBridge(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             SendingBridge = false;
             GameUI.m_Instance.m_Status.Close();
+
+            foreach (BridgeEdge Edge in BridgeEdges.m_Edges)
+            {
+                if (Edge.m_IsBroken)
+                {
+                    PopUpWarning.Display("Can't send bridge with broken edge!");
+                    return;
+                }
+            }
+
             UnityWebRequestAsyncOperation unityWebRequestAsyncOperation = (UnityWebRequestAsyncOperation)asyncOperation;
             Debug.Log(unityWebRequestAsyncOperation.webRequest.downloadHandler.text);
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
@@ -444,7 +494,7 @@ namespace TwitchMod
             }
         }
         
-        private static void OnPushBridgeComplete(UnityEngine.AsyncOperation asyncOperation)
+        private void OnPushBridgeComplete(UnityEngine.AsyncOperation asyncOperation)
         {
             SendingBridge = false;
             GameUI.m_Instance.m_Status.Close();
@@ -477,7 +527,7 @@ namespace TwitchMod
             request.SendWebRequest().completed += OnConnectComplete2;
         }
 
-        private static void OnConnectComplete2(UnityEngine.AsyncOperation asyncOperation)
+        private void OnConnectComplete2(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             GettingLayout = false;
@@ -502,7 +552,7 @@ namespace TwitchMod
             }
         }
 
-        private static void GetLayoutPayload(UnityEngine.AsyncOperation asyncOperation)
+        private void GetLayoutPayload(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             GettingLayout = false;
@@ -547,7 +597,7 @@ namespace TwitchMod
             }
         }
 
-        private static void GenerateLayout(UnityEngine.AsyncOperation asyncOperation)
+        private void GenerateLayout(UnityEngine.AsyncOperation asyncOperation)
         {
             Debug.Log("Completed");
             GettingLayout = false;
@@ -593,7 +643,7 @@ namespace TwitchMod
         {
             private static void Postfix(string key)
             {
-                mKey.Value = key;
+                instance.mKey.Value = key;
             }
         }
     }
