@@ -3,19 +3,24 @@ What it does: It lets you send bridges to streamers ingame
 
 Game Version: 1.24+
 
-Dependencies: PolyTech Framework 0.9.1+
+Dependencies: PolyTech Framework 0.9.5+
 
-To install: Place this .dll in the ...\Poly Bridge 2\BepInEx\plugins folder
+To install: Place this .dll in the ...\Poly Bridge 2\BepInEx\plugins folder, you also have to link your twitch acount with poly bridge!
 
 
 # Settings
 - Enable/Disable Mod: Enables/Disables the mod
 
-- Streamer Name: The name of the streamer you want to send the bridge to
+- Send To Self: What button sends the bridge to yourself
 
-- Send Bridge: The key that you need to press to send the bridge
+- Streamer Amount: The amount of streamers you want to store
 
-- Load Layout: The key that you need to press to load the current layout the streamer has
+# Settings per streamers
+- Name: The name of the streamers
+
+- Send Bridge: What button sends the bridge to this streamer
+
+- Load Layout: What button loads the layout from the streamer
 
 
 # Advanced Settings

@@ -25,36 +25,41 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.0.2";
+        public const string pluginVerson = "1.1.0";
 
-        public ConfigDefinition modEnableDef = new ConfigDefinition(pluginName, "Enable/Disable Mod");
-        public ConfigDefinition NameDef = new ConfigDefinition(pluginName, "Streamer Name");
-        public ConfigDefinition SendBridgeDef = new ConfigDefinition(pluginName, "Send Bridge");
-        public ConfigDefinition LoadLayoutDef = new ConfigDefinition(pluginName, "Load Layout");
-        public ConfigDefinition KeyDef = new ConfigDefinition(pluginName, "Key");
+        public ConfigDefinition modEnableDef = new ConfigDefinition("_" + pluginName, "Enable/Disable Mod");
+        public ConfigDefinition SendSelfDef = new ConfigDefinition("_" + pluginName, "Send To Self");
+        public ConfigDefinition KeyDef = new ConfigDefinition("_" + pluginName, "Key");
+        public ConfigDefinition AmountDef = new ConfigDefinition("_" + pluginName, "Streamer Amount");
 
         public ConfigEntry<bool> mEnabled;
-
-        public ConfigEntry<string> mName;
-        public string LastName = "";
         
         public ConfigEntry<string> mKey;
 
-        public ConfigEntry<KeyboardShortcut> mSendBridge;
-        public bool KeyIsDown = false;
-        public bool SendingBridge = false;
+        public ConfigEntry<KeyboardShortcut> mSendSelf;
 
-        public ConfigEntry<KeyboardShortcut> mLoadLayout;
-        public bool LayoutKeyIsDown = false;
-        public bool GettingLayout = false;
+        public ConfigEntry<int> mAmount;
+        public int CurrentAmount = 0;
+        public bool handledAmount = true;
+
+        public CashedStreamer currentStreamer = null;
+
+        public List<CashedStreamer> streamers = new List<CashedStreamer>();
+
+        public List<CashedStreamer> queue = new List<CashedStreamer>();
+
 
         public const string ClientID = "9bksp3cxt84auuicqxnnuk1y4mhrd6";
         public const string ClientSecret = "fvilbl2jku0xixwfmz5euqi4vnml7f";
-        public string ID = "";
-        public DateTime LastCharInput;
+
+        public bool SendingBridge = false;
         public bool FindingID = false;
+        public bool GettingLayout = false;
 
         public string Key = "";
+
+        public DateTime LastCharInput = DateTime.Now;
+        public bool handledGetID = true;
 
         public static TwitchMain instance;
 
@@ -62,30 +67,25 @@ namespace TwitchMod
         {
             if (instance == null) instance = this;
             repositoryUrl = "https://github.com/Bram2323/PB-Twitch-Mod/";
-            LastCharInput = DateTime.Now;
+            authors = new string[] { "Bram2323" };
 
             int order = 0;
 
-            Config.Bind(modEnableDef, true, new ConfigDescription("Controls if the mod should be enabled or disabled", null, new ConfigurationManagerAttributes { Order = order }));
-            mEnabled = (ConfigEntry<bool>)Config[modEnableDef];
+            mEnabled = Config.Bind(modEnableDef, true, new ConfigDescription("Controls if the mod should be enabled or disabled", null, new ConfigurationManagerAttributes { Order = order }));
             mEnabled.SettingChanged += onEnableDisable;
             order--;
 
-            Config.Bind(NameDef, "", new ConfigDescription("Which streamer to send the bridge to", null, new ConfigurationManagerAttributes { Order = order }));
-            mName = (ConfigEntry<string>)Config[NameDef];
-            mName.SettingChanged += onCharInput;
+            mSendSelf = Config.Bind(SendSelfDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("What button sends the bridge to yourself", null, new ConfigurationManagerAttributes { Order = order }));
             order--;
 
-            mSendBridge = Config.Bind(SendBridgeDef, new KeyboardShortcut(KeyCode.Tab), new ConfigDescription("What button sends the bridge", null, new ConfigurationManagerAttributes { Order = order }));
+            mKey = Config.Bind(KeyDef, "", new ConfigDescription("Don't change this unless you know what you're doing! DON'T SHOW THIS TO ANYONE!", null, new ConfigurationManagerAttributes { Order = order , IsAdvanced = true}));
             order--;
 
-            mLoadLayout = Config.Bind(LoadLayoutDef, new KeyboardShortcut(KeyCode.LeftBracket), new ConfigDescription("What button loads the current layout the streamer has", null, new ConfigurationManagerAttributes { Order = order }));
+            mAmount = Config.Bind(AmountDef, 1, new ConfigDescription("The amount of streamers you want to store", null, new ConfigurationManagerAttributes { Order = order }));
+            mAmount.SettingChanged += onAmountChange;
             order--;
 
-            Config.Bind(KeyDef, "", new ConfigDescription("Don't change this unless you know what you're doing!", null, new ConfigurationManagerAttributes { Order = order , IsAdvanced = true}));
-            mKey = (ConfigEntry<string>)Config[KeyDef];
-            order--;
-
+            handledAmount = false;
 
             Harmony harmony = new Harmony(pluginGuid);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
@@ -105,6 +105,7 @@ namespace TwitchMod
         public void onCharInput(object sender, EventArgs e)
         {
             LastCharInput = DateTime.Now;
+            handledGetID = false;
         }
         
 
@@ -139,27 +140,144 @@ namespace TwitchMod
 
         public bool SendingStuff()
         {
-            return instance.FindingID || instance.SendingBridge || instance.GettingLayout;
+            return FindingID || SendingBridge || GettingLayout;
         }
 
 
-
-
-        [HarmonyPatch(typeof(Main), "Update")]
-        private static class patchUpdate
+        public void onAmountChange(object sender, EventArgs e)
         {
-            private static void Postfix()
-            {
-                if (!instance.CheckForCheating()) return;
-                
+            if (CurrentAmount != mAmount.Value) handledAmount = false;
+            else handledAmount = true;
 
-                if (instance.LastName != instance.mName.Value && (DateTime.Now - instance.LastCharInput).TotalSeconds >= 2 && !instance.SendingStuff())
+            if (CurrentAmount != mAmount.Value && !SendingStuff())
+            {
+                for (int i = 0; i < CurrentAmount; i++)
                 {
-                    instance.LastName = instance.mName.Value;
-                    instance.GetStreamerID();
+                    CashedStreamer streamer = streamers[i];
+                    
+                    string tName = streamer.mName.Value;
+                    KeyboardShortcut tSend = streamer.mSendBridge.Value;
+                    KeyboardShortcut tLoad = streamer.mLoadLayout.Value;
+                    string tID = streamer.mID.Value;
+
+
+                    Config.Remove(streamer.NameDef);
+                    Config.Remove(streamer.SendBridgeDef);
+                    Config.Remove(streamer.LoadLayoutDef);
+                    Config.Remove(streamer.IDDef);
+
+
+                    streamer.mName = Config.Bind(streamer.NameDef, "", new ConfigDescription("The name of the streamer", null, new ConfigurationManagerAttributes { Browsable = false }));
+                    streamer.mName.Value = tName;
+
+                    streamer.mSendBridge = Config.Bind(streamer.SendBridgeDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("Send to streamer", null, new ConfigurationManagerAttributes { Browsable = false }));
+                    streamer.mSendBridge.Value = tSend;
+
+                    streamer.mLoadLayout = Config.Bind(streamer.LoadLayoutDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("Load layout from streamer", null, new ConfigurationManagerAttributes { Browsable = false }));
+                    streamer.mLoadLayout.Value = tLoad;
+
+                    streamer.mID = Config.Bind(streamer.IDDef, "", new ConfigDescription("Don't change this!", null, new ConfigurationManagerAttributes { Browsable = false }));
+                    streamer.mID.Value = tID;
+                }
+                streamers.Clear();
+                queue.Clear();
+
+                for (int i = 0; i < mAmount.Value; i++)
+                {
+                    CashedStreamer streamer = new CashedStreamer();
+                    streamers.Add(streamer);
+
+                    string Def = "Streamer " + (i + 1);
+
+                    streamer.NameDef = new ConfigDefinition(Def, "Name");
+                    streamer.SendBridgeDef = new ConfigDefinition(Def, "Send Bridge");
+                    streamer.LoadLayoutDef = new ConfigDefinition(Def, "Load Layout");
+                    streamer.IDDef = new ConfigDefinition(Def, "ID");
+
+
+                    streamer.mName = Config.Bind(streamer.NameDef, "", new ConfigDescription("The name of the streamer", null, new ConfigurationManagerAttributes { Browsable = true, Order = 4 }));
+
+                    streamer.mSendBridge = Config.Bind(streamer.SendBridgeDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("Send to streamer", null, new ConfigurationManagerAttributes { Browsable = true, Order = 3 }));
+
+                    streamer.mLoadLayout = Config.Bind(streamer.LoadLayoutDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("Load layout from streamer", null, new ConfigurationManagerAttributes { Browsable = true, Order = 2 }));
+
+                    streamer.mID = Config.Bind(streamer.IDDef, "", new ConfigDescription("Don't change this!", null, new ConfigurationManagerAttributes { Browsable = false }));
+
+                    string tName = streamer.mName.Value;
+                    KeyboardShortcut tSend = streamer.mSendBridge.Value;
+                    KeyboardShortcut tLoad = streamer.mLoadLayout.Value;
+                    string tID = streamer.mID.Value;
+
+                    Config.Remove(streamer.NameDef);
+                    Config.Remove(streamer.SendBridgeDef);
+                    Config.Remove(streamer.LoadLayoutDef);
+                    Config.Remove(streamer.IDDef);
+
+                    
+                    streamer.mName = Config.Bind(streamer.NameDef, "", new ConfigDescription("The name of the streamer", null, new ConfigurationManagerAttributes { Browsable = true, Order = 4 }));
+                    streamer.mName.Value = tName;
+                    streamer.mName.SettingChanged += onCharInput;
+
+                    streamer.mSendBridge = Config.Bind(streamer.SendBridgeDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("Send to streamer", null, new ConfigurationManagerAttributes { Browsable = true, Order = 3 }));
+                    streamer.mSendBridge.Value = tSend;
+
+                    streamer.mLoadLayout = Config.Bind(streamer.LoadLayoutDef, new KeyboardShortcut(KeyCode.None), new ConfigDescription("Load layout from streamer", null, new ConfigurationManagerAttributes { Browsable = true, Order = 2 }));
+                    streamer.mLoadLayout.Value = tLoad;
+
+                    streamer.mID = Config.Bind(streamer.IDDef, "", new ConfigDescription("Don't change this!", null, new ConfigurationManagerAttributes { Browsable = false }));
+                    streamer.mID.Value = tID;
+                    if (string.IsNullOrWhiteSpace(streamer.mName.Value)) streamer.mID.Value = "";
+
+                    streamer.LastName = streamer.mName.Value;
+
+                    if (!string.IsNullOrWhiteSpace(streamer.mName.Value) && string.IsNullOrWhiteSpace(streamer.mID.Value))
+                    {
+                        queue.Add(streamer);
+                        handledGetID = false;
+                    }
                 }
 
-                if (instance.mSendBridge.Value.IsPressed() && !instance.KeyIsDown && !instance.SendingStuff())
+                CurrentAmount = mAmount.Value;
+                handledAmount = true;
+            }
+
+            Config.Reload();
+        }
+
+
+        void Update()
+        {
+            if (!handledAmount && !SendingStuff())
+            {
+                onAmountChange(null, null);
+            }
+
+            if (!CheckForCheating()) return;
+            
+
+            if (!handledGetID && (DateTime.Now - LastCharInput).Seconds > 3)
+            {
+                foreach (CashedStreamer streamer in streamers)
+                {
+                    if (streamer.mName.Value != streamer.LastName) queue.Add(streamer);
+                    streamer.LastName = streamer.mName.Value;
+                }
+                handledGetID = true;
+            }
+
+            if (queue.Count > 0 && !SendingStuff())
+            {
+                CashedStreamer streamer = queue[0];
+
+                GetStreamerID(streamer);
+
+                queue.Remove(streamer);
+            }
+
+
+            foreach (CashedStreamer streamer in streamers)
+            {
+                if (streamer.mSendBridge.Value.IsDown() && !SendingStuff())
                 {
                     GameUI.m_Instance.m_TopBar.OnPauseSim();
                     bool Broken = false;
@@ -167,39 +285,51 @@ namespace TwitchMod
                     {
                         Broken = Edge.m_IsBroken || Broken;
                     }
-                        
-
+                    
                     if (Broken)
                     {
                         PopUpWarning.Display("Can't send bridge with broken edge!");
                     }
                     else
                     {
-                        PopUpMessage.Display("Do you want to send the bridge?", instance.SendBridge);
+                        PopUpMessage.Display("Do you want to send the bridge to " + streamer.mName.Value + "?", delegate { SendBridge(streamer); });
                     }
                 }
-                instance.KeyIsDown = instance.mSendBridge.Value.IsPressed();
 
-
-                if (instance.mLoadLayout.Value.IsPressed() && !instance.LayoutKeyIsDown && !instance.SendingStuff())
+                if (streamer.mLoadLayout.Value.IsDown() && !SendingStuff())
                 {
-                    PopUpMessage.Display("Do you want to load the layout?", instance.GetLayout);
+                    PopUpMessage.Display("Do you want to load the layout of " + streamer.mName.Value + "?", delegate { GetLayout(streamer); });
                 }
-                instance.LayoutKeyIsDown = instance.mLoadLayout.Value.IsPressed();
+            }
+
+            if (mSendSelf.Value.IsDown())
+            {
+                SendToSelf();
             }
         }
 
 
-        public void GetStreamerID()
+        public void GetStreamerID(CashedStreamer streamer)
         {
-            instance.FindingID = true;
+            if (streamer == null || SendingStuff())
+            {
+                return;
+            }
+            else if (string.IsNullOrWhiteSpace(streamer.mName.Value))
+            {
+                streamer.mID.Value = "";
+                return;
+            }
+
+            FindingID = true;
+            currentStreamer = streamer;
 
             if (Key.IsNullOrWhiteSpace())
             {
                 GameUI.m_Instance.m_Status.Open("Getting streamer id (1/2)");
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Getting Streamer ID", 3);
                 Debug.Log("Getting Twitch Key...");
-                WebRequest.Post("https://id.twitch.tv/oauth2/token?client_id=" + ClientID + "&client_secret=" + ClientSecret + "&grant_type=client_credentials", PolyTwitch.m_Key).SendWebRequest().completed += instance.OnPullKeyComplete;
+                WebRequest.Post("https://id.twitch.tv/oauth2/token?client_id=" + ClientID + "&client_secret=" + ClientSecret + "&grant_type=client_credentials", PolyTwitch.m_Key).SendWebRequest().completed += OnPullKeyComplete;
             }
             else
             {
@@ -222,6 +352,7 @@ namespace TwitchMod
                 Debug.LogWarning("https://id.twitch.tv/oauth2/token?client_id=" + ClientID + "&client_secret=******************************&grant_type=client_credentials" + " failed with: " + errorMessage);
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Could not get ID: " + errorMessage, 3);
                 PopUpWarning.Display("Could not get ID: " + errorMessage);
+                currentStreamer.mID.Value = "";
             }
             else
             {
@@ -236,7 +367,7 @@ namespace TwitchMod
         private void PullId()
         {
             Debug.Log("Getting streamer ID...");
-            UnityWebRequest IDRequest = WebRequest.Get("https://api.twitch.tv/helix/users?login=" + mName.Value, PolyTwitch.m_Key);
+            UnityWebRequest IDRequest = WebRequest.Get("https://api.twitch.tv/helix/users?login=" + currentStreamer.mName.Value, PolyTwitch.m_Key);
             IDRequest.SetRequestHeader("Authorization", "Bearer " + Key);
             IDRequest.SetRequestHeader("Client-ID", ClientID);
             IDRequest.SendWebRequest().completed += OnPullIdComplete;
@@ -252,9 +383,10 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://api.twitch.tv/helix/users?login=" + mName.Value + " failed with: " + errorMessage);
+                Debug.LogWarning(unityWebRequestAsyncOperation.webRequest.url + " failed with: " + errorMessage);
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Could not get ID: " + errorMessage, 3);
                 PopUpWarning.Display("Could not get ID: " + errorMessage);
+                currentStreamer.mID.Value = "";
             }
             else
             {
@@ -290,26 +422,37 @@ namespace TwitchMod
                 if (foundID != "")
                 {
                     Debug.Log("ID found! " + foundID);
-                    if (GameStateManager.GetState() != GameState.MAIN_MENU)
-                    {
-                        GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Found ID: " + foundID, 3);
-                    }
-                    ID = foundID;
+                    GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Found ID: " + foundID, 3);
+                    currentStreamer.mID.Value = foundID;
                 }
                 else
                 {
                     Debug.LogWarning("ID not found");
-                    if (GameStateManager.GetState() != GameState.MAIN_MENU)
-                    {
-                        GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Streamer doesn't exist!", 3);
-                    }
+                    GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Streamer doesn't exist!", 3);
+                    PopUpWarning.Display("Streamer ID was not found!");
+                    currentStreamer.mID.Value = "";
                 }
             }
         }
 
 
-        public void SendBridge()
+        public void SendBridge(CashedStreamer streamer)
         {
+            if (streamer == null || SendingStuff())
+            {
+                return;
+            }
+            else if (string.IsNullOrWhiteSpace(streamer.mID.Value))
+            {
+                PopUpWarning.Display("The ID of this streamer is not cashed or not valid!");
+                return;
+            }
+            else if (string.IsNullOrWhiteSpace(mKey.Value))
+            {
+                PopUpWarning.Display("Make sure you linked your twitch acount with poly bridge before you send a bridge!");
+                return;
+            }
+
             foreach (BridgeEdge Edge in BridgeEdges.m_Edges)
             {
                 if (Edge.m_IsBroken)
@@ -319,12 +462,13 @@ namespace TwitchMod
                 }
             }
 
+            currentStreamer = streamer;
             SendingBridge = true;
             GameUI.m_Instance.m_Status.Open("Sending bridge (1/3)");
             GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage("Sending bridge...", 3);
             Debug.Log("Connecting to streamer...");
 
-            UnityWebRequest request = WebRequest.Post("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/connect", mKey.Value);
+            UnityWebRequest request = WebRequest.Post("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + streamer.mID.Value + "/connect", mKey.Value);
             request.SetRequestHeader("Authorization", "Bearer " + mKey.Value);
             request.SetRequestHeader("accept", "application/json");
             request.SendWebRequest().completed += OnConnectComplete;
@@ -350,7 +494,7 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/connect failed with: " + errorMessage);
+                Debug.LogWarning(unityWebRequestAsyncOperation.webRequest.url + " failed with: " + errorMessage);
                 PopUpWarning.Display("Could not send bridge: " + errorMessage);
             }
             else
@@ -358,7 +502,7 @@ namespace TwitchMod
                 SendingBridge = true;
                 GameUI.m_Instance.m_Status.Open("Sending bridge (2/3)");
                 Debug.Log("Getting level hash");
-                UnityWebRequest BridgeRequest = WebRequest.Get("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/pull?delay=0", mKey.Value);
+                UnityWebRequest BridgeRequest = WebRequest.Get("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + currentStreamer.mID.Value + "/pull?delay=0", mKey.Value);
                 BridgeRequest.SetRequestHeader("Authorization", "Bearer " + mKey.Value);
                 BridgeRequest.SetRequestHeader("accept", "application/json");
                 BridgeRequest.SendWebRequest().completed += PushBridge;
@@ -385,7 +529,7 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/pull?delay=0 failed with: " + errorMessage);
+                Debug.LogWarning(unityWebRequestAsyncOperation.webRequest.url + " failed with: " + errorMessage);
                 PopUpWarning.Display("Could not send bridge: " + errorMessage);
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage(unityWebRequestAsyncOperation.webRequest.downloadHandler.text, 3);
             }
@@ -401,96 +545,72 @@ namespace TwitchMod
                     }
                 }
 
-                SendingBridge = true;
-                GameUI.m_Instance.m_Status.Open("Sending bridge (3/3)");
-
-                JSONObject json = new JSONObject(unityWebRequestAsyncOperation.webRequest.downloadHandler.text);
-
-                string LevelHash = "";
-                if (json.HasField("level_hash"))
+                try
                 {
-                    json.GetField(ref LevelHash, "level_hash");
+                    SendingBridge = true;
+                    GameUI.m_Instance.m_Status.Open("Sending bridge (3/3)");
+
+                    JSONObject json = new JSONObject(unityWebRequestAsyncOperation.webRequest.downloadHandler.text);
+
+                    if (json == null)
+                    {
+                        Debug.LogWarning("Something went wrong while looking for level hash");
+                        SendingBridge = false;
+                        GameUI.m_Instance.m_Status.Close();
+                        PopUpWarning.Display("Something went wrong while trying to send the bridge");
+                        return;
+                    }
+
+                    string LevelHash = "";
+                    if (json.HasField("level_hash"))
+                    {
+                        json.GetField(ref LevelHash, "level_hash");
+                    }
+
+
+                    if (LevelHash != "")
+                    {
+                        Debug.Log("Level Hash found! " + LevelHash);
+                    }
+                    else
+                    {
+                        Debug.LogWarning("Level Hash not found");
+                        SendingBridge = false;
+                        GameUI.m_Instance.m_Status.Close();
+                        PopUpWarning.Display("Something went wrong while trying to send the bridge");
+                        return;
+                    }
+
+                    Debug.Log("Sending bridge...");
+
+                    byte[] payloadBytes;
+
+                    string guid = "Bram2323IsTheBest!";
+
+                    if (!BridgeJoints.m_JointDictionary.ContainsKey(guid)) BridgeJoints.CreateJoint(new Vector3(0, 0, -10000), guid);
+                    else Debug.Log("Twitch detection node already present in bridge");
+                    payloadBytes = BridgeSave.SerializeBinary();
+                    BridgeJoints.FindByGuid(guid).Destroy();
+
+                    byte[] payloadCompressed = Utils.ZipPayload(payloadBytes);
+                    string payload_md5 = Utils.MD5HashFor(payloadCompressed);
+
+                    WWWForm wwwform = new WWWForm();
+                    wwwform.AddBinaryData("payload", payloadCompressed, "file.zip", "zip");
+                    wwwform.AddField("payload_hash", payload_md5);
+                    wwwform.AddField("level_hash", LevelHash);
+                    UnityWebRequest BridgeRequest = WebRequest.Post("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + currentStreamer.mID.Value + "/push", mKey.Value, wwwform);
+                    BridgeRequest.SetRequestHeader("Authorization", "Bearer " + mKey.Value);
+                    BridgeRequest.SetRequestHeader("accept", "application/json");
+                    BridgeRequest.SendWebRequest().completed += OnPushBridgeComplete;
                 }
-
-
-                if (LevelHash != "")
+                catch
                 {
-                    Debug.Log("Level Hash found! " + LevelHash);
-                }
-                else
-                {
-                    Debug.LogWarning("Level Hash not found");
+                    Debug.LogWarning("Exception was thrown while sending bridge");
                     SendingBridge = false;
                     GameUI.m_Instance.m_Status.Close();
-                    return;
+                    PopUpWarning.Display("Something went wrong while trying to send the bridge");
                 }
-
-                Debug.Log("Sending bridge...");
-
-                byte[] payloadBytes;
-
-                string guid = "Bram2323IsTheBest!";
-
-                if (!BridgeJoints.m_JointDictionary.ContainsKey(guid)) BridgeJoints.CreateJoint(new Vector3(0, 0, -10000), guid);
-                else Debug.Log("Twitch detection node already present in bridge");
-                payloadBytes = BridgeSave.SerializeBinary();
-                BridgeJoints.FindByGuid(guid).Destroy();
-
-                byte[] payloadCompressed = Utils.ZipPayload(payloadBytes);
-                string payload_md5 = Utils.MD5HashFor(payloadCompressed);
-
-                if (mName.Value.ToLower() == Profile.m_TwitchUsername.ToLower())
-                {
-                    ConsumeReply consumeReply = new ConsumeReply
-                    {
-                        id = ID,
-                        owner = new Owner
-                        {
-                            id = ID,
-                            username = Profile.m_TwitchUsername
-                        },
-                        level_hash = LevelHash,
-                        twitch_bits_used = 0,
-                    };
-
-                    string id = consumeReply.id;
-                    string username = consumeReply.owner.username;
-                    string id2 = consumeReply.owner.id;
-                    string level_hash = consumeReply.level_hash;
-                    int twitch_bits_used = consumeReply.twitch_bits_used;
-                    if (!Utils.MD5HashesMatch(level_hash, Sandbox.m_CurrentLayoutHash))
-                    {
-                        SendingBridge = false;
-                        GameUI.m_Instance.m_Status.Close();
-                        return;
-                    }
-                    if (twitch_bits_used > 0)
-                    {
-                        InterfaceAudio.Play("ui_twitch_bits");
-                    }
-                    string bridgeHash = Utils.MD5HashFor(payloadBytes);
-                    if (PolyTwitchSuggestions.SuggestionFromSameOwnerExists(id2, bridgeHash))
-                    {
-                        PolyTwitchSuggestions.UpdateSuggestionTimeAndBits(id2, bridgeHash, twitch_bits_used);
-                        SendingBridge = false;
-                        GameUI.m_Instance.m_Status.Close();
-                        return;
-                    }
-                    int num = 0;
-                    BridgeSaveData bridgeSaveData = new BridgeSaveData();
-                    bridgeSaveData.DeserializeBinary(payloadBytes, ref num);
-                    PolyTwitchSuggestions.Create(username, id2, id, bridgeSaveData, bridgeHash, level_hash, PolyTwitchSuggestionTag.NONE, twitch_bits_used);
-                }
-
-
-                WWWForm wwwform = new WWWForm();
-                wwwform.AddBinaryData("payload", payloadCompressed, "file.zip", "zip");
-                wwwform.AddField("payload_hash", payload_md5);
-                wwwform.AddField("level_hash", LevelHash);
-                UnityWebRequest BridgeRequest = WebRequest.Post("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/push", mKey.Value, wwwform);
-                BridgeRequest.SetRequestHeader("Authorization", "Bearer " + mKey.Value);
-                BridgeRequest.SetRequestHeader("accept", "application/json");
-                BridgeRequest.SendWebRequest().completed += OnPushBridgeComplete;
             }
         }
         
@@ -503,7 +623,7 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/push" + " failed with: " + errorMessage);
+                Debug.LogWarning(unityWebRequestAsyncOperation.webRequest.url + " failed with: " + errorMessage);
                 PopUpWarning.Display("Could not send bridge: " + errorMessage);
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage(unityWebRequestAsyncOperation.webRequest.downloadHandler.text, 3);
             }
@@ -515,13 +635,29 @@ namespace TwitchMod
         }
         
         
-        public void GetLayout()
+        public void GetLayout(CashedStreamer streamer)
         {
+            if (streamer == null || SendingStuff())
+            {
+                return;
+            }
+            else if (string.IsNullOrWhiteSpace(streamer.mID.Value))
+            {
+                PopUpWarning.Display("The ID of this streamer is not cashed or not valid!");
+                return;
+            }
+            else if (string.IsNullOrWhiteSpace(mKey.Value))
+            {
+                PopUpWarning.Display("Make sure you linked your twitch acount with poly bridge before you send a bridge!");
+                return;
+            }
+
+            currentStreamer = streamer;
             GettingLayout = true;
             GameUI.m_Instance.m_Status.Open("Getting layout (1/3)");
             Debug.Log("Connecting to streamer...");
 
-            UnityWebRequest request = WebRequest.Post("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/connect", mKey.Value);
+            UnityWebRequest request = WebRequest.Post("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + streamer.mID.Value + "/connect", mKey.Value);
             request.SetRequestHeader("Authorization", "Bearer " + mKey.Value);
             request.SetRequestHeader("accept", "application/json");
             request.SendWebRequest().completed += OnConnectComplete2;
@@ -537,7 +673,7 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/connect failed with: " + errorMessage);
+                Debug.LogWarning(unityWebRequestAsyncOperation.webRequest.url + " failed with: " + errorMessage);
                 PopUpWarning.Display("Could not get layout: " + errorMessage);
             }
             else
@@ -545,7 +681,7 @@ namespace TwitchMod
                 GettingLayout = true;
                 GameUI.m_Instance.m_Status.Open("Getting layout (2/3)");
                 Debug.Log("Getting payload url");
-                UnityWebRequest BridgeRequest = WebRequest.Get("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/pull?delay=0", mKey.Value);
+                UnityWebRequest BridgeRequest = WebRequest.Get("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + currentStreamer.mID.Value + "/pull?delay=0", mKey.Value);
                 BridgeRequest.SetRequestHeader("Authorization", "Bearer " + mKey.Value);
                 BridgeRequest.SetRequestHeader("accept", "application/json");
                 BridgeRequest.SendWebRequest().completed += GetLayoutPayload;
@@ -562,7 +698,7 @@ namespace TwitchMod
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
-                Debug.LogWarning("https://api.t2.drycactus.com/v1/" + "viewer/stream/" + ID + "/pull?delay=0 failed with: " + errorMessage);
+                Debug.LogWarning(unityWebRequestAsyncOperation.webRequest.url + " failed with: " + errorMessage);
                 PopUpWarning.Display("Could not get layout: " + errorMessage);
                 GameUI.m_Instance.m_TopBar.m_MessageTopLeft.ShowMessage(unityWebRequestAsyncOperation.webRequest.downloadHandler.text, 3);
             }
@@ -603,7 +739,6 @@ namespace TwitchMod
             GettingLayout = false;
             GameUI.m_Instance.m_Status.Close();
             UnityWebRequestAsyncOperation unityWebRequestAsyncOperation = (UnityWebRequestAsyncOperation)asyncOperation;
-            Debug.Log(unityWebRequestAsyncOperation.webRequest.downloadHandler.data);
             if (unityWebRequestAsyncOperation.webRequest.isNetworkError || unityWebRequestAsyncOperation.webRequest.isHttpError)
             {
                 string errorMessage = WebRequest.GetErrorMessage(unityWebRequestAsyncOperation.webRequest);
@@ -625,7 +760,8 @@ namespace TwitchMod
                 }
                 catch
                 {
-                    PopUpWarning.Display("Could not ");
+                    PopUpWarning.Display("Could not get layout");
+                    return;
                 }
 
                 GameStateManager.SwitchToStateImmediate(GameState.BUILD);
@@ -636,6 +772,48 @@ namespace TwitchMod
             }
         }
 
+
+        public void SendToSelf()
+        {
+            byte[] payloadBytes = BridgeSave.SerializeBinary();
+            string LevelHash = Sandbox.m_CurrentLayoutHash;
+
+            ConsumeReply consumeReply = new ConsumeReply
+            {
+                id = "TwitchMod",
+                owner = new Owner
+                {
+                    id = "TwitchMod",
+                    username = Profile.m_TwitchUsername
+                },
+                level_hash = LevelHash,
+                twitch_bits_used = 0,
+            };
+
+            string id = consumeReply.id;
+            string username = consumeReply.owner.username;
+            string id2 = consumeReply.owner.id;
+            string level_hash = consumeReply.level_hash;
+            int twitch_bits_used = consumeReply.twitch_bits_used;
+            if (!Utils.MD5HashesMatch(level_hash, Sandbox.m_CurrentLayoutHash))
+            {
+                return;
+            }
+            if (twitch_bits_used > 0)
+            {
+                InterfaceAudio.Play("ui_twitch_bits");
+            }
+            string bridgeHash = Utils.MD5HashFor(payloadBytes);
+            if (PolyTwitchSuggestions.SuggestionFromSameOwnerExists(id2, bridgeHash))
+            {
+                PolyTwitchSuggestions.UpdateSuggestionTimeAndBits(id2, bridgeHash, twitch_bits_used);
+                return;
+            }
+            int num = 0;
+            BridgeSaveData bridgeSaveData = new BridgeSaveData();
+            bridgeSaveData.DeserializeBinary(payloadBytes, ref num);
+            PolyTwitchSuggestions.Create(username, id2, id, bridgeSaveData, bridgeHash, level_hash, PolyTwitchSuggestionTag.NONE, twitch_bits_used);
+        }
 
 
         [HarmonyPatch(typeof(PolyTwitch), "AuthorizeWithKey")]
@@ -649,10 +827,25 @@ namespace TwitchMod
     }
 
 
+    public class CashedStreamer
+    {
+        public ConfigDefinition NameDef;
+        public ConfigEntry<string> mName;
+        public string LastName = "";
+
+        public ConfigDefinition SendBridgeDef;
+        public ConfigEntry<KeyboardShortcut> mSendBridge;
+
+        public ConfigDefinition LoadLayoutDef;
+        public ConfigEntry<KeyboardShortcut> mLoadLayout;
+
+        public ConfigDefinition IDDef;
+        public ConfigEntry<string> mID;
+    }
+
 
     public class TwitchResponse
     {
-        //{"access_token":"mwre5kk0jwgutslfqstlyu6ovekd37","expires_in":5047347,"token_type":"bearer"}
         public string access_token = "";
         public int expires_in = 0;
         public string token_type = "";
