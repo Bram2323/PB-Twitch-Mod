@@ -15,7 +15,7 @@ To install: Place this .dll in the ...\Poly Bridge 2\BepInEx\plugins folder, you
 
 - Streamer Amount: The amount of streamers you want to store
 
-# Settings per streamers
+# Settings per streamer
 - Name: The name of the streamers
 
 - Send Bridge: What button sends the bridge to this streamer
