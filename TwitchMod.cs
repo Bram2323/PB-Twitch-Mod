@@ -25,7 +25,7 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.1.0";
+        public const string pluginVerson = "1.1.1";
 
         public ConfigDefinition modEnableDef = new ConfigDefinition("_" + pluginName, "Enable/Disable Mod");
         public ConfigDefinition SendSelfDef = new ConfigDefinition("_" + pluginName, "Send To Self");
@@ -55,6 +55,8 @@ namespace TwitchMod
         public bool SendingBridge = false;
         public bool FindingID = false;
         public bool GettingLayout = false;
+
+        public string loadedBridgeHash = "";
 
         public string Key = "";
 
@@ -583,14 +585,7 @@ namespace TwitchMod
 
                     Debug.Log("Sending bridge...");
 
-                    byte[] payloadBytes;
-
-                    string guid = "Bram2323IsTheBest!";
-
-                    if (!BridgeJoints.m_JointDictionary.ContainsKey(guid)) BridgeJoints.CreateJoint(new Vector3(0, 0, -10000), guid);
-                    else Debug.Log("Twitch detection node already present in bridge");
-                    payloadBytes = BridgeSave.SerializeBinary();
-                    BridgeJoints.FindByGuid(guid).Destroy();
+                    byte[] payloadBytes = GetLayoutBytesWithDetectionNode();
 
                     byte[] payloadCompressed = Utils.ZipPayload(payloadBytes);
                     string payload_md5 = Utils.MD5HashFor(payloadCompressed);
@@ -769,13 +764,53 @@ namespace TwitchMod
                 
                 Sandbox.Clear();
                 Sandbox.Load(layoutData.m_ThemeStubKey, layoutData, true);
+                loadedBridgeHash = Utils.MD5HashFor(layoutData.m_Bridge.SerializeBinary());
+            }
+        }
+
+        [HarmonyPatch(typeof(BridgeSave), "Serialize")]
+        private static class patchSerialize
+        {
+            private static void Postfix(ref BridgeSaveData __result)
+            {
+                if (Utils.MD5HashesMatch(instance.loadedBridgeHash, Utils.MD5HashFor(__result.SerializeBinary())))
+                {
+                    __result.m_BridgeEdges.Clear();
+                    __result.m_BridgeJoints.Clear();
+                    __result.m_BridgeSprings.Clear();
+                    __result.m_Pistons.Clear();
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(BridgeSaveData), "SerializeBinary")]
+        private static class patchSerializeBinary
+        {
+            private static void Postfix(BridgeSaveData __instance, ref byte[] __result)
+            {
+                if (Utils.MD5HashesMatch(instance.loadedBridgeHash, Utils.MD5HashFor(__result)))
+                {
+                    List<byte> list = new List<byte>();
+                    list.AddRange(ByteSerializer.SerializeInt(__instance.m_Version));
+                    list.AddRange(ByteSerializer.SerializeInt(0));
+                    list.AddRange(ByteSerializer.SerializeInt(0));
+                    list.AddRange(ByteSerializer.SerializeInt(0));
+                    list.AddRange(ByteSerializer.SerializeInt(0));
+                    list.AddRange(__instance.m_HydraulicsController.SerializeBinary());
+                    list.AddRange(ByteSerializer.SerializeInt(__instance.m_Anchors.Count));
+                    foreach (BridgeJointProxy bridgeJointProxy2 in __instance.m_Anchors)
+                    {
+                        list.AddRange(bridgeJointProxy2.SerializeBinary());
+                    }
+                    __result = list.ToArray();
+                }
             }
         }
 
 
         public void SendToSelf()
         {
-            byte[] payloadBytes = BridgeSave.SerializeBinary();
+            byte[] payloadBytes = GetLayoutBytesWithDetectionNode();
             string LevelHash = Sandbox.m_CurrentLayoutHash;
 
             ConsumeReply consumeReply = new ConsumeReply
@@ -813,6 +848,56 @@ namespace TwitchMod
             BridgeSaveData bridgeSaveData = new BridgeSaveData();
             bridgeSaveData.DeserializeBinary(payloadBytes, ref num);
             PolyTwitchSuggestions.Create(username, id2, id, bridgeSaveData, bridgeHash, level_hash, PolyTwitchSuggestionTag.NONE, twitch_bits_used);
+        }
+
+
+        public byte[] GetLayoutBytesWithDetectionNode()
+        {
+            string guid = "Bram2323IsTheBest!"; //Had to think of a guid the game would never pick...
+
+            BridgeSaveData payloadProxy = BridgeSave.Serialize();
+
+            bool alreadyExists = false;
+            foreach (BridgeJointProxy joint in payloadProxy.m_BridgeJoints) alreadyExists = joint.m_Guid == guid || alreadyExists;
+
+            if (!alreadyExists)
+            {
+                if (payloadProxy.m_BridgeJoints.Count > 0)
+                {
+                    string jointGuid = payloadProxy.m_BridgeJoints[0].m_Guid;
+                    foreach (BridgeEdgeProxy edge in payloadProxy.m_BridgeEdges)
+                    {
+                        if (edge.m_NodeA_Guid == jointGuid) edge.m_NodeA_Guid = guid;
+                        if (edge.m_NodeB_Guid == jointGuid) edge.m_NodeB_Guid = guid;
+                    }
+                    foreach (BridgeSpringProxy spring in payloadProxy.m_BridgeSprings)
+                    {
+                        if (spring.m_NodeA_Guid == jointGuid) spring.m_NodeA_Guid = guid;
+                        if (spring.m_NodeB_Guid == jointGuid) spring.m_NodeB_Guid = guid;
+                    }
+                    foreach (PistonProxy piston in payloadProxy.m_Pistons)
+                    {
+                        if (piston.m_NodeA_Guid == jointGuid) piston.m_NodeA_Guid = guid;
+                        if (piston.m_NodeB_Guid == jointGuid) piston.m_NodeB_Guid = guid;
+                    }
+                    payloadProxy.m_BridgeJoints[0].m_Guid = guid;
+                }
+                else
+                {
+                    List<byte> detectionNodeData = new List<byte>();
+                    detectionNodeData.AddRange(ByteSerializer.SerializeVector3(new Vector3(0, 0, -1000)));
+                    detectionNodeData.AddRange(ByteSerializer.SerializeBool(false));
+                    detectionNodeData.AddRange(ByteSerializer.SerializeBool(false));
+                    detectionNodeData.AddRange(ByteSerializer.SerializeString(guid));
+
+                    int offset = 0;
+                    BridgeJointProxy detectionNode = new BridgeJointProxy(1, detectionNodeData.ToArray(), ref offset);
+                    payloadProxy.m_BridgeJoints.Add(detectionNode);
+                }
+            }
+            else Debug.Log("Detection node already exists!");
+
+            return payloadProxy.SerializeBinary();
         }
 
 

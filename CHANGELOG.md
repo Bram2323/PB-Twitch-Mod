@@ -1,5 +1,10 @@
 # Changelog:
 
+1.1.1
+- Changed how the twitch detection node is added, it will now replace an existing node instead of adding a new one. This should fix any butterfly effects.
+
+
+
 1.1.0
 - Added save slots for streamers
 - Streamer id's will now be cashed to make it less likely for the "too many requests" error to occur
