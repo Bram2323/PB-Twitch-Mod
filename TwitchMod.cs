@@ -1,13 +1,8 @@
 ﻿using System;
 using System.Reflection;
-using System.Collections;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.IO;
-using System.IO.Compression;
 using UnityEngine;
 using HarmonyLib;
-using Poly.Math;
 using BepInEx;
 using BepInEx.Configuration;
 using PolyTechFramework;
@@ -25,7 +20,7 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.1.1";
+        public const string pluginVerson = "1.1.2";
 
         public ConfigDefinition modEnableDef = new ConfigDefinition("_" + pluginName, "Enable/Disable Mod");
         public ConfigDefinition SendSelfDef = new ConfigDefinition("_" + pluginName, "Send To Self");
@@ -862,9 +857,21 @@ namespace TwitchMod
 
             if (!alreadyExists)
             {
-                if (payloadProxy.m_BridgeJoints.Count > 0)
+                int jointIndex = -1;
+
+                for (int i = 0; i < payloadProxy.m_BridgeJoints.Count; i++)
                 {
-                    string jointGuid = payloadProxy.m_BridgeJoints[0].m_Guid;
+                    BridgeJointProxy joint = payloadProxy.m_BridgeJoints[i];
+                    if (!joint.m_IsSplit && !joint.m_IsAnchor)
+                    {
+                        jointIndex = i;
+                        break;
+                    }
+                }
+
+                if (jointIndex >= 0)
+                {
+                    string jointGuid = payloadProxy.m_BridgeJoints[jointIndex].m_Guid;
                     foreach (BridgeEdgeProxy edge in payloadProxy.m_BridgeEdges)
                     {
                         if (edge.m_NodeA_Guid == jointGuid) edge.m_NodeA_Guid = guid;
