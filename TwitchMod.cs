@@ -20,7 +20,7 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.1.2";
+        public const string pluginVerson = "1.1.3";
 
         public ConfigDefinition modEnableDef = new ConfigDefinition("_" + pluginName, "Enable/Disable Mod");
         public ConfigDefinition SendSelfDef = new ConfigDefinition("_" + pluginName, "Send To Self");
@@ -853,7 +853,14 @@ namespace TwitchMod
             BridgeSaveData payloadProxy = BridgeSave.Serialize();
 
             bool alreadyExists = false;
-            foreach (BridgeJointProxy joint in payloadProxy.m_BridgeJoints) alreadyExists = joint.m_Guid == guid || alreadyExists;
+            foreach (BridgeJointProxy joint in payloadProxy.m_BridgeJoints)
+            {
+                if (joint.m_Guid == guid)
+                {
+                    alreadyExists = true;
+                    break;
+                }
+            }
 
             if (!alreadyExists)
             {
@@ -887,7 +894,7 @@ namespace TwitchMod
                         if (piston.m_NodeA_Guid == jointGuid) piston.m_NodeA_Guid = guid;
                         if (piston.m_NodeB_Guid == jointGuid) piston.m_NodeB_Guid = guid;
                     }
-                    payloadProxy.m_BridgeJoints[0].m_Guid = guid;
+                    payloadProxy.m_BridgeJoints[jointIndex].m_Guid = guid;
                 }
                 else
                 {

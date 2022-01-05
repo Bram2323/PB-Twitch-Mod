@@ -1,5 +1,10 @@
 # Changelog:
 
+1.1.3
+- Fixed another bug where bridges with split joints could break
+
+
+
 1.1.2
 - Fixed a bug where bridges with split joints could break
 
