@@ -20,7 +20,7 @@ namespace TwitchMod
 
         public const string pluginName = "Twitch Mod";
 
-        public const string pluginVerson = "1.1.3";
+        public const string pluginVerson = "1.1.4";
 
         public ConfigDefinition modEnableDef = new ConfigDefinition("_" + pluginName, "Enable/Disable Mod");
         public ConfigDefinition SendSelfDef = new ConfigDefinition("_" + pluginName, "Send To Self");
@@ -778,7 +778,7 @@ namespace TwitchMod
             }
         }
 
-        [HarmonyPatch(typeof(BridgeSaveData), "SerializeBinary")]
+        [HarmonyPatch(typeof(BridgeSaveData), "SerializeBinary", new Type[] { typeof(bool) })]
         private static class patchSerializeBinary
         {
             private static void Postfix(BridgeSaveData __instance, ref byte[] __result)
@@ -791,7 +791,7 @@ namespace TwitchMod
                     list.AddRange(ByteSerializer.SerializeInt(0));
                     list.AddRange(ByteSerializer.SerializeInt(0));
                     list.AddRange(ByteSerializer.SerializeInt(0));
-                    list.AddRange(__instance.m_HydraulicsController.SerializeBinary());
+                    list.AddRange(__instance.m_HydraulicsController.SerializeBinary(true));
                     list.AddRange(ByteSerializer.SerializeInt(__instance.m_Anchors.Count));
                     foreach (BridgeJointProxy bridgeJointProxy2 in __instance.m_Anchors)
                     {

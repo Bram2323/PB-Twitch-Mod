@@ -1,7 +1,7 @@
 # TwitchMod
 What it does: It lets you send bridges to streamers ingame
 
-Game Version: 1.24+
+Game Version: 1.50+
 
 Dependencies: PolyTech Framework 0.9.5+
 
